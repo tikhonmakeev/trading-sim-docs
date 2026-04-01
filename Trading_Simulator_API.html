@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trading Simulator — Trader API</title>
+  <style>body { margin: 0; padding: 0; }</style>
+</head>
+<body>
+  <div id="redoc-container"></div>
+  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <script>
+    const spec = {
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Trading Simulator — Trader API",
+    "version": "1.0.0",
+    "description": "API для алготрейдинга в симуляторе.\n#### По вопросам-предложениям-интеграциям в тайм (t.makeev) или ТГ (@tikhonmakeev)\n## Быстрый старт\n1. **POST /login** — получи `access_token`\n2. **GET /session/** — найди активную сессию, запомни её `id`\n3. **GET /session/{session_id}** — посмотри доступные тикеры\n4. Получай цены, новости, торгуй\n\n## Авторизация\nВсе эндпоинты (кроме Login) требуют заголовок:\n```\nAuthorization: Bearer <access_token>\n```\nТокен действует 1 день. В браузере настроен автоматический рефреш при протухании, могу помочь реализовать что-то подобное (не включаю описание в эту доку для упрощения)\n\n## Запросы\nДля выполнения запросов используй Postman-коллекцию (`Trading_Simulator_API.postman_collection.json`) или любой HTTP-клиент (curl, Python requests, и т.д.)."
+  },
+  "servers": [
+    {
+      "url": "https://trading-sim.culab.ru/api",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth",
+      "description": "Авторизация"
+    },
+    {
+      "name": "sessions",
+      "description": "Торговые сессии"
+    },
+    {
+      "name": "market-data",
+      "description": "Котировки и новости"
+    },
+    {
+      "name": "trading",
+      "description": "Покупка и продажа"
+    },
+    {
+      "name": "portfolio",
+      "description": "Портфель и баланс"
+    }
+  ],
+  "paths": {
+    "/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Авторизация",
+        "description": "Получение access_token по логину и паролю.\nФормат тела — `application/x-www-form-urlencoded` (стандарт OAuth2).",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "Логин пользователя"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "description": "Пароль"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Успешная авторизация",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Неверные учётные данные",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Список сессий",
+        "description": "Возвращает все торговые сессии. Найди нужную и используй её `id` в остальных запросах.",
+        "responses": {
+          "200": {
+            "description": "Список сессий",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Session"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/{session_id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Детали сессии",
+        "description": "Возвращает сессию с полным списком инструментов (тикеры, названия).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сессия с инструментами",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Сессия не найдена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/get-current-price-of-instrument": {
+      "get": {
+        "tags": [
+          "market-data"
+        ],
+        "summary": "Текущая цена инструмента",
+        "description": "Возвращает bid/ask цены для инструмента в текущий момент сессии.\n- `bid_price` — цена продажи (используй при sell)\n- `ask_price` — цена покупки (используй при buy)\n\nВозвращает 404, если торговый день закончился.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          },
+          {
+            "name": "instrument_ticker",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Тикер инструмента (например, SBER)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Текущая цена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentPrice"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Сессия на паузе",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Торговый день закончился или тикер не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/current-trading-day": {
+      "get": {
+        "tags": [
+          "market-data"
+        ],
+        "summary": "Текущий торговый день",
+        "description": "Возвращает номер текущего торгового дня и time_index сессии.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Текущий день",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentDay"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session_moment/history": {
+      "get": {
+        "tags": [
+          "market-data"
+        ],
+        "summary": "История котировок (все тикеры)",
+        "description": "Возвращает историю цен всех инструментов сессии до текущего момента. Результат сгруппирован по тикеру.\n\nНедоступен, если администратор отключил историю для сессии.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "История котировок по тикерам",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MomentsByTicker"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "История отключена для данной сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session_moment/history/{ticker}": {
+      "get": {
+        "tags": [
+          "market-data"
+        ],
+        "summary": "История котировок (по тикеру)",
+        "description": "Возвращает историю цен конкретного инструмента до текущего момента.\n\nНедоступен, если администратор отключил историю для сессии.",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Тикер инструмента (например, SBER)"
+          },
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "История котировок",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionMoment"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "История отключена для данной сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news/{session_id}": {
+      "get": {
+        "tags": [
+          "market-data"
+        ],
+        "summary": "Новости",
+        "description": "Возвращает новости сессии строго до текущего момента.\n\nМожно указать конкретный момент через `reproduced_day` и `time_index` — значения будут ограничены текущим моментом (заглянуть в будущее нельзя).\n\nБез параметров — новости до текущего момента в реальном времени.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdPath"
+          },
+          {
+            "name": "reproduced_day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Номер торгового дня (необязательно)"
+          },
+          {
+            "name": "time_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Time index внутри дня (необязательно)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список новостей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/News"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/buy": {
+      "post": {
+        "tags": [
+          "trading"
+        ],
+        "summary": "Купить инструмент",
+        "description": "Покупка инструмента по указанной цене.\n\n- `price` — используй `ask_price` из Get Current Price\n- `amount` — количество лотов\n\nВозвращает новый баланс свободных средств.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          },
+          {
+            "name": "instrument_ticker",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Тикер инструмента"
+          },
+          {
+            "name": "price",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Цена покупки (ask_price)"
+          },
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Количество лотов"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Покупка выполнена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoneyAmount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ошибка (недостаточно средств, неверная цена, и т.д.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/sell": {
+      "post": {
+        "tags": [
+          "trading"
+        ],
+        "summary": "Продать инструмент",
+        "description": "Продажа инструмента по указанной цене.\n\n- `price` — используй `bid_price` из Get Current Price\n- `amount` — количество лотов\n\nВозвращает новый баланс свободных средств.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          },
+          {
+            "name": "instrument_ticker",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Тикер инструмента"
+          },
+          {
+            "name": "price",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Цена продажи (bid_price)"
+          },
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Количество лотов"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Продажа выполнена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoneyAmount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ошибка (нет позиции, неверная цена, и т.д.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/portfolio": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Портфель",
+        "description": "Текущий портфель: список позиций по инструментам с текущей рыночной оценкой.\n\nКаждая позиция содержит:\n- `ticker` — тикер\n- `quantity` — количество лотов\n- `current_price` — текущая рыночная цена\n- `sum_price` — стоимость позиции",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Портфель",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Portfolio"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trade/money-amount": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Баланс",
+        "description": "Текущий баланс свободных денежных средств.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionIdQuery"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Баланс",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoneyAmount"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Access token, полученный через POST /login"
+      }
+    },
+    "parameters": {
+      "SessionIdQuery": {
+        "name": "session_id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "UUID торговой сессии"
+      },
+      "SessionIdPath": {
+        "name": "session_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "UUID торговой сессии"
+      }
+    },
+    "schemas": {
+      "Token": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "JWT-токен для авторизации"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "bearer"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Описание ошибки"
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Название сессии"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CREATED",
+              "STARTED",
+              "PAUSED",
+              "FINISHED"
+            ],
+            "description": "Статус сессии"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total_days": {
+            "type": "integer",
+            "description": "Всего торговых дней в сессии"
+          },
+          "capital": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Начальный капитал"
+          },
+          "instruments": {
+            "type": "array",
+            "description": "Инструменты, доступные в сессии",
+            "items": {
+              "$ref": "#/components/schemas/StockItem"
+            }
+          }
+        }
+      },
+      "StockItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Название компании"
+          },
+          "ticker": {
+            "type": "string",
+            "description": "Тикер (например, SBER)"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "industry": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "InstrumentPrice": {
+        "type": "object",
+        "required": [
+          "bid_price",
+          "ask_price",
+          "current_day",
+          "current_index"
+        ],
+        "properties": {
+          "bid_price": {
+            "type": "number",
+            "format": "double",
+            "description": "Цена продажи (используй при sell)"
+          },
+          "ask_price": {
+            "type": "number",
+            "format": "double",
+            "description": "Цена покупки (используй при buy)"
+          },
+          "current_day": {
+            "type": "integer",
+            "description": "Текущий торговый день"
+          },
+          "current_index": {
+            "type": "integer",
+            "description": "Текущий time_index"
+          }
+        }
+      },
+      "CurrentDay": {
+        "type": "object",
+        "required": [
+          "current_day",
+          "current_index"
+        ],
+        "properties": {
+          "current_day": {
+            "type": "integer",
+            "description": "Номер текущего торгового дня"
+          },
+          "current_index": {
+            "type": "integer",
+            "description": "Текущий time_index внутри дня"
+          }
+        }
+      },
+      "SessionMoment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "p_ask": {
+            "type": "number",
+            "description": "Цена ask"
+          },
+          "p_bid": {
+            "type": "number",
+            "description": "Цена bid"
+          },
+          "p_mid": {
+            "type": "number",
+            "description": "Средняя цена"
+          },
+          "time_index": {
+            "type": "integer"
+          },
+          "original_day": {
+            "type": "integer"
+          },
+          "reproduced_day": {
+            "type": "integer"
+          }
+        }
+      },
+      "MomentsByTicker": {
+        "type": "object",
+        "description": "Словарь: тикер -> массив котировок",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SessionMoment"
+          }
+        }
+      },
+      "News": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "original_day": {
+            "type": "integer",
+            "description": "Исторический день публикации"
+          },
+          "display_day": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Номер дня сессии для отображения"
+          },
+          "time": {
+            "type": "string",
+            "format": "time",
+            "description": "Время публикации (HH:MM:SS)"
+          },
+          "headline": {
+            "type": "string",
+            "description": "Заголовок новости"
+          },
+          "text": {
+            "type": "string",
+            "description": "Полный текст новости"
+          },
+          "is_economic": {
+            "type": "boolean",
+            "description": "Экономическая новость"
+          }
+        }
+      },
+      "MoneyAmount": {
+        "type": "object",
+        "required": [
+          "money_amount"
+        ],
+        "properties": {
+          "money_amount": {
+            "type": "number",
+            "format": "double",
+            "description": "Баланс свободных средств"
+          }
+        }
+      },
+      "Portfolio": {
+        "type": "object",
+        "properties": {
+          "participant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortfolioItem"
+            }
+          }
+        }
+      },
+      "PortfolioItem": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "description": "Тикер инструмента"
+          },
+          "quantity": {
+            "type": "integer",
+            "description": "Количество лотов"
+          },
+          "company_name": {
+            "type": "string",
+            "description": "Название компании"
+          },
+          "current_price": {
+            "type": "number",
+            "format": "double",
+            "description": "Текущая рыночная цена"
+          },
+          "sum_price": {
+            "type": "number",
+            "format": "double",
+            "description": "Стоимость позиции (quantity * current_price)"
+          }
+        }
+      }
+    }
+  }
+};
+
+    Redoc.init(spec, {
+      scrollYOffset: 0,
+      hideDownloadButton: false,
+      hideHostname: false,
+      noAutoAuth: true
+    }, document.getElementById('redoc-container'));
+  </script>
+</body>
+</html>

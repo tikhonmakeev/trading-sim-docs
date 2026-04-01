@@ -1,0 +1,321 @@
+{
+	"info": {
+		"name": "Trading Simulator API",
+		"description": "API для алготрейдинга в симуляторе.\n\n## Быстрый старт\n1. Выполни запрос **Login** (укажи свой логин/пароль) — токен автоматически сохранится\n2. Выполни **Get Sessions** → скопируй нужный `id` в переменную `session_id`\n3. Выполни **Get Session Details** → посмотри доступные тикеры\n4. Получай цены, новости, торгуй\n\nBearer-токен подставляется во все запросы автоматически.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{access_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://trading-sim.culab.ru/api",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "session_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Login",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    var json = pm.response.json();",
+							"    pm.collectionVariables.set('access_token', json.access_token);",
+							"    console.log('access_token saved');",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "username",
+							"value": "your_login",
+							"type": "text"
+						},
+						{
+							"key": "password",
+							"value": "your_password",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{base_url}}/login",
+					"host": ["{{base_url}}"],
+					"path": ["login"]
+				},
+				"description": "Авторизация. Укажи свой логин и пароль.\nТокен автоматически сохранится — все остальные запросы будут работать."
+			}
+		},
+		{
+			"name": "Sessions",
+			"item": [
+				{
+					"name": "Get Sessions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/session/",
+							"host": ["{{base_url}}"],
+							"path": ["session", ""]
+						},
+						"description": "Список сессий. Скопируй `id` нужной сессии в переменную коллекции `session_id`."
+					}
+				},
+				{
+					"name": "Get Session Details",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/session/{{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["session", "{{session_id}}"]
+						},
+						"description": "Детали сессии: статус, список доступных инструментов (тикеры)."
+					}
+				}
+			]
+		},
+		{
+			"name": "Market Data",
+			"item": [
+				{
+					"name": "Get Current Price",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/get-current-price-of-instrument?session_id={{session_id}}&instrument_ticker=SBER",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "get-current-price-of-instrument"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								},
+								{
+									"key": "instrument_ticker",
+									"value": "SBER"
+								}
+							]
+						},
+						"description": "Текущая цена инструмента: bid_price, ask_price, current_day, current_index.\nВозвращает 404, если торговый день закончился."
+					}
+				},
+				{
+					"name": "Get Current Trading Day",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/current-trading-day?session_id={{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "current-trading-day"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								}
+							]
+						},
+						"description": "Текущий торговый день (current_day) и time_index сессии."
+					}
+				},
+				{
+					"name": "Get Price History (all tickers)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/session_moment/history?session_id={{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["session_moment", "history"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								}
+							]
+						},
+						"description": "История котировок всех инструментов до текущего момента."
+					}
+				},
+				{
+					"name": "Get Price History (by ticker)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/session_moment/history/SBER?session_id={{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["session_moment", "history", "SBER"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								}
+							]
+						},
+						"description": "История котировок конкретного тикера до текущего момента.\nЗамени SBER в URL на нужный тикер."
+					}
+				},
+				{
+					"name": "Get News",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/news/{{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["news", "{{session_id}}"]
+						},
+						"description": "Новости для сессии, строго до текущего момента.\nМожно указать конкретный момент через query-параметры reproduced_day и time_index."
+					}
+				}
+			]
+		},
+		{
+			"name": "Trading",
+			"item": [
+				{
+					"name": "Buy",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/buy?session_id={{session_id}}&instrument_ticker=SBER&price=250.5&amount=10",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "buy"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								},
+								{
+									"key": "instrument_ticker",
+									"value": "SBER"
+								},
+								{
+									"key": "price",
+									"value": "250.5"
+								},
+								{
+									"key": "amount",
+									"value": "10"
+								}
+							]
+						},
+						"description": "Купить инструмент.\n\n- instrument_ticker — тикер\n- price — ask_price из Get Current Price\n- amount — количество лотов\n\nВозвращает новый баланс (money_amount)."
+					}
+				},
+				{
+					"name": "Sell",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/sell?session_id={{session_id}}&instrument_ticker=SBER&price=251.0&amount=5",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "sell"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								},
+								{
+									"key": "instrument_ticker",
+									"value": "SBER"
+								},
+								{
+									"key": "price",
+									"value": "251.0"
+								},
+								{
+									"key": "amount",
+									"value": "5"
+								}
+							]
+						},
+						"description": "Продать инструмент.\n\n- instrument_ticker — тикер\n- price — bid_price из Get Current Price\n- amount — количество лотов\n\nВозвращает новый баланс (money_amount)."
+					}
+				}
+			]
+		},
+		{
+			"name": "Portfolio",
+			"item": [
+				{
+					"name": "Get Portfolio",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/portfolio?session_id={{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "portfolio"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								}
+							]
+						},
+						"description": "Текущий портфель: позиции по инструментам + оценка стоимости."
+					}
+				},
+				{
+					"name": "Get Balance",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/trade/money-amount?session_id={{session_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["trade", "money-amount"],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "{{session_id}}"
+								}
+							]
+						},
+						"description": "Текущий денежный баланс (свободные средства)."
+					}
+				}
+			]
+		}
+	]
+}

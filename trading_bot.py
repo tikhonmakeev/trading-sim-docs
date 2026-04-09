@@ -19,8 +19,12 @@
 API_BASE_URL = "http://trading-sim.culab.ru/api" # URL платформы (обычно менять не нужно)
 API_TOKEN    = "YOUR_TOKEN_HERE"                  # Ваш токен (вставьте из личного кабинета)
 SESSION_ID   = "YOUR_SESSION_ID_HERE"             # ID сессии (вставьте из списка сессий или скопируйте с url сайта с графиком)
-TICKER       = "TICKER"                           # Тикер инструмента, например "SBER" (можно потсмотреть через API, можно подглядеть в UI)
-TRADE_AMOUNT = 1                                  # Сколько акций покупать/продавать за раз
+
+# Список тикеров для торговли и количество акций за одну сделку для каждого
+TICKERS = {
+    "SBER": 1,   # Тикер: количество акций за сделку
+    "GAZP": 1,   # Добавьте сколько нужно тикеров
+}
 
 
 # ╔═══════════════════════════════════════════════════════════════════╗
@@ -39,15 +43,16 @@ MA_MID   = 60       # Средняя скользящая средняя
 MA_LONG  = 300      # Длинная скользящая средняя (медленная, показывает тренд)
 
 
-def decide(prices, position, bid, ask):
+def decide(prices, position, bid, ask, trade_amount):
     """
-    Функция принятия решения. Вызывается каждый раз, когда приходит новая цена.
+    Функция принятия решения. Вызывается для каждого тикера при появлении новой цены.
 
     Что приходит на вход:
-        prices   — список всех прошлых цен (от старых к новым)
-        position — сколько акций у вас сейчас в портфеле (0 = ничего нет)
-        bid      — цена, по которой можно ПРОДАТЬ прямо сейчас
-        ask      — цена, по которой можно КУПИТЬ прямо сейчас
+        prices       — список всех прошлых цен (от старых к новым)
+        position     — сколько акций у вас сейчас в портфеле (0 = ничего нет)
+        bid          — цена, по которой можно ПРОДАТЬ прямо сейчас
+        ask          — цена, по которой можно КУПИТЬ прямо сейчас
+        trade_amount — сколько акций покупать/продавать за раз
 
     Что нужно вернуть (одно из трёх):
         ("BUY",  количество, цена)  — купить акции по цене ask
@@ -62,22 +67,22 @@ def decide(prices, position, bid, ask):
 
     # Если данных пока мало — ждём
     if ma_short is None or ma_mid is None or ma_long is None:
-        return ("HOLD", 0, 0)
+        return "HOLD", 0, 0
 
     # ── Правило на ПОКУПКУ ──
     # Короткая средняя выше средней и длинной → цена растёт → покупаем
     if ma_short > ma_mid and ma_short > ma_long:
         if position == 0:  # Покупаем только если ещё ничего не держим
-            return ("BUY", TRADE_AMOUNT, ask)
+            return "BUY", trade_amount, ask
 
     # ── Правило на ПРОДАЖУ ──
     # Короткая средняя ниже средней и длинной → цена падает → продаём
     if ma_short < ma_mid and ma_short < ma_long:
         if position > 0:  # Продаём только если есть что продавать
-            return ("SELL", min(TRADE_AMOUNT, position), bid)
+            return "SELL", min(trade_amount, position), bid
 
     # Ни одно правило не сработало — ждём
-    return ("HOLD", 0, 0)
+    return "HOLD", 0, 0
 
 
 # ╔═══════════════════════════════════════════════════════════════════╗
@@ -203,41 +208,46 @@ class APIClient:
 
 def main():
     api = APIClient(API_BASE_URL, API_TOKEN)
-    prices = deque()
 
-    # Загружаем историю цен
-    log.info("Загрузка истории цен для %s ...", TICKER)
-    try:
-        history = api.get_price_history(SESSION_ID, TICKER)
-        for m in history:
-            prices.append(float(m["p_mid"]))
-        log.info("Загружено %d точек из истории", len(prices))
-    except requests.HTTPError as e:
-        if e.response.status_code in (403, 404):
-            log.info("История недоступна — начинаем с нуля")
-        else:
-            raise
+    # Состояние для каждого тикера: история цен и текущая позиция
+    ticker_prices = {}    # ticker -> deque цен
+    ticker_positions = {} # ticker -> количество акций
 
-    # Узнаём текущую позицию
+    # Загружаем историю цен и позиции для всех тикеров
     portfolio = api.get_portfolio(SESSION_ID)
-    position = get_position(portfolio, TICKER)
-    log.info("Текущая позиция: %d акций %s", position, TICKER)
+
+    for ticker in TICKERS:
+        ticker_prices[ticker] = deque()
+
+        log.info("Загрузка истории цен для %s ...", ticker)
+        try:
+            history = api.get_price_history(SESSION_ID, ticker)
+            for m in history:
+                ticker_prices[ticker].append(float(m["p_mid"]))
+            log.info("  %s: загружено %d точек", ticker, len(ticker_prices[ticker]))
+        except requests.HTTPError as e:
+            if e.response.status_code in (403, 404):
+                log.info("  %s: история недоступна — начинаем с нуля", ticker)
+            else:
+                raise
+
+        ticker_positions[ticker] = get_position(portfolio, ticker)
+        log.info("  %s: текущая позиция %d акций", ticker, ticker_positions[ticker])
 
     last_day = None
     last_index = None
 
-    log.info("Бот запущен. Опрос каждые %d сек.", POLL_INTERVAL)
+    log.info("Бот запущен. Тикеры: %s. Опрос каждые %d сек.", ", ".join(TICKERS), POLL_INTERVAL)
     log.info("─" * 60)
 
     while True:
         try:
-            quote = api.get_current_price(SESSION_ID, TICKER)
+            # Получаем цену первого тикера для проверки time_index
+            first_ticker = next(iter(TICKERS))
+            quote = api.get_current_price(SESSION_ID, first_ticker)
 
             cur_day = quote["current_day"]
             cur_index = quote["current_index"]
-            bid = float(quote["bid_price"])
-            ask = float(quote["ask_price"])
-            mid = (bid + ask) / 2.0
 
             # Пропускаем, если индекс не изменился
             if cur_day == last_day and cur_index == last_index:
@@ -246,37 +256,52 @@ def main():
 
             last_day = cur_day
             last_index = cur_index
-            prices.append(mid)
 
-            log.info(
-                "День %d  Индекс %3d | %s mid=%.2f | Позиция: %d",
-                cur_day, cur_index, TICKER, mid, position,
-            )
-
-            # Вызываем стратегию !ОБРАТИТЕ ВНИМАНИЕ, это тут))!
-            action, amount, price = decide(prices, position, bid, ask)
-
-            if action == "BUY" and amount > 0:
+            # Обрабатываем каждый тикер
+            for ticker, trade_amount in TICKERS.items():
                 try:
-                    balance = api.buy(SESSION_ID, TICKER, price, amount)
-                    position += amount
-                    log.info(
-                        "  >>> BUY %d x %s @ %.2f | Баланс: %.2f",
-                        amount, TICKER, price, balance,
-                    )
-                except requests.HTTPError as e:
-                    log.warning("  !!! Ошибка покупки: %s", e.response.text)
+                    q = api.get_current_price(SESSION_ID, ticker) if ticker != first_ticker else quote
+                    bid = float(q["bid_price"])
+                    ask = float(q["ask_price"])
+                    mid = (bid + ask) / 2.0
 
-            elif action == "SELL" and amount > 0:
-                try:
-                    balance = api.sell(SESSION_ID, TICKER, price, amount)
-                    position -= amount
+                    ticker_prices[ticker].append(mid)
+                    position = ticker_positions[ticker]
+
                     log.info(
-                        "  <<< SELL %d x %s @ %.2f | Баланс: %.2f",
-                        amount, TICKER, price, balance,
+                        "День %d  Индекс %3d | %s mid=%.2f | Позиция: %d",
+                        cur_day, cur_index, ticker, mid, position,
                     )
+
+                    # Вызываем стратегию для этого тикера
+                    action, amount, price = decide(
+                        ticker_prices[ticker], position, bid, ask, trade_amount,
+                    )
+
+                    if action == "BUY" and amount > 0:
+                        try:
+                            balance = api.buy(SESSION_ID, ticker, price, amount)
+                            ticker_positions[ticker] += amount
+                            log.info(
+                                "  >>> BUY %d x %s @ %.2f | Баланс: %.2f",
+                                amount, ticker, price, balance,
+                            )
+                        except requests.HTTPError as e:
+                            log.warning("  !!! %s: ошибка покупки: %s", ticker, e.response.text)
+
+                    elif action == "SELL" and amount > 0:
+                        try:
+                            balance = api.sell(SESSION_ID, ticker, price, amount)
+                            ticker_positions[ticker] -= amount
+                            log.info(
+                                "  <<< SELL %d x %s @ %.2f | Баланс: %.2f",
+                                amount, ticker, price, balance,
+                            )
+                        except requests.HTTPError as e:
+                            log.warning("  !!! %s: ошибка продажи: %s", ticker, e.response.text)
+
                 except requests.HTTPError as e:
-                    log.warning("  !!! Ошибка продажи: %s", e.response.text)
+                    log.warning("  !!! %s: ошибка получения цены: %s", ticker, e.response.text)
 
         except requests.HTTPError as e:
             code = e.response.status_code

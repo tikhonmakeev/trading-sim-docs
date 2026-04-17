@@ -16,7 +16,7 @@
 # ║                                                                   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 
-API_BASE_URL = "http://trading-sim.culab.ru/api" # URL платформы (обычно менять не нужно)
+API_BASE_URL = "https://trading-sim.culab.ru/api" # URL платформы (обычно менять не нужно)
 API_TOKEN    = "YOUR_TOKEN_HERE"                  # Ваш токен (вставьте из личного кабинета)
 SESSION_ID   = "YOUR_SESSION_ID_HERE"             # ID сессии (вставьте из списка сессий или скопируйте с url сайта с графиком)
 
@@ -43,7 +43,7 @@ MA_MID   = 60       # Средняя скользящая средняя
 MA_LONG  = 300      # Длинная скользящая средняя (медленная, показывает тренд)
 
 
-def decide(prices, position, bid, ask, trade_amount):
+def decide(prices, position, bid, ask, trade_amount, news=None):
     """
     Функция принятия решения. Вызывается для каждого тикера при появлении новой цены.
 
@@ -53,12 +53,18 @@ def decide(prices, position, bid, ask, trade_amount):
         bid          — цена, по которой можно ПРОДАТЬ прямо сейчас
         ask          — цена, по которой можно КУПИТЬ прямо сейчас
         trade_amount — сколько акций покупать/продавать за раз
+        news         — список новостей (list[dict]), каждая содержит:
+                       headline (str), text (str), display_day (int),
+                       time (str), is_economic (bool)
+                       Можно использовать для анализа настроений.
 
     Что нужно вернуть (одно из трёх):
         ("BUY",  количество, цена)  — купить акции по цене ask
         ("SELL", количество, цена)  — продать акции по цене bid
         ("HOLD", 0, 0)             — ничего не делать, подождать
     """
+    if news is None:
+        news = []
 
     # Считаем скользящие средние
     ma_short = moving_average(prices, MA_SHORT)
@@ -139,68 +145,99 @@ def get_position(portfolio, ticker):
 class APIClient:
     def __init__(self, base_url, token):
         self.base = base_url.rstrip("/")
+        origin = self.base.replace("/api", "")
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {token}",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer": base_url.replace("/api", "/"),
-            "Origin": base_url.replace("/api", ""),
+            "Accept-Encoding": "gzip, deflate, br",
+            "Content-Type": "application/json",
+            "Referer": origin + "/",
+            "Origin": origin,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Ch-Ua": '"Chromium";v="125", "Not=A?Brand";v="8"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Connection": "keep-alive",
         })
 
+    def _request(self, method, url, **kwargs):
+        r = self.session.request(method, url, **kwargs)
+        if not r.ok:
+            detail = ""
+            try:
+                detail = r.json().get("detail", "")
+            except Exception:
+                pass
+            if detail:
+                log.warning("API %d: %s", r.status_code, detail)
+        r.raise_for_status()
+        return r
+
     def get_price_history(self, session_id, ticker):
-        r = self.session.get(
+        r = self._request("GET",
             f"{self.base}/session_moment/history/{ticker}",
             params={"session_id": session_id},
         )
-        r.raise_for_status()
         return r.json()
 
     def get_current_price(self, session_id, ticker):
-        r = self.session.get(
+        r = self._request("GET",
             f"{self.base}/trade/get-current-price-of-instrument",
             params={"session_id": session_id, "instrument_ticker": ticker},
         )
-        r.raise_for_status()
         return r.json()
 
     def get_portfolio(self, session_id):
-        r = self.session.get(
+        r = self._request("GET",
             f"{self.base}/trade/portfolio",
             params={"session_id": session_id},
         )
-        r.raise_for_status()
         return r.json()
 
+    def get_money_amount(self, session_id):
+        r = self._request("GET",
+            f"{self.base}/trade/money-amount",
+            params={"session_id": session_id},
+        )
+        return r.json()["money_amount"]
+
+    def get_news(self, session_id):
+        """Новости сессии до текущего момента. Каждая новость — dict с полями:
+           headline, text, display_day, time, is_economic."""
+        try:
+            r = self._request("GET", f"{self.base}/news/{session_id}")
+            return r.json()
+        except requests.HTTPError:
+            return []
+
     def buy(self, session_id, ticker, price, amount):
-        r = self.session.post(
+        r = self._request("POST",
             f"{self.base}/trade/buy",
             params={
                 "session_id": session_id,
                 "instrument_ticker": ticker,
                 "price": price,
-                "amount": amount,
+                "amount": int(amount),
             },
         )
-        r.raise_for_status()
         return r.json()["money_amount"]
 
     def sell(self, session_id, ticker, price, amount):
-        r = self.session.post(
+        r = self._request("POST",
             f"{self.base}/trade/sell",
             params={
                 "session_id": session_id,
                 "instrument_ticker": ticker,
                 "price": price,
-                "amount": amount,
+                "amount": int(amount),
             },
         )
-        r.raise_for_status()
         return r.json()["money_amount"]
 
 
@@ -257,6 +294,9 @@ def main():
             last_day = cur_day
             last_index = cur_index
 
+            # Получаем новости (доступны всем стратегиям)
+            news = api.get_news(SESSION_ID)
+
             # Обрабатываем каждый тикер
             for ticker, trade_amount in TICKERS.items():
                 try:
@@ -275,27 +315,33 @@ def main():
 
                     # Вызываем стратегию для этого тикера
                     action, amount, price = decide(
-                        ticker_prices[ticker], position, bid, ask, trade_amount,
+                        ticker_prices[ticker], position, bid, ask, trade_amount, news,
                     )
 
                     if action == "BUY" and amount > 0:
                         try:
-                            balance = api.buy(SESSION_ID, ticker, price, amount)
+                            # Получаем свежую цену прямо перед сделкой
+                            fresh = api.get_current_price(SESSION_ID, ticker)
+                            fresh_ask = float(fresh["ask_price"])
+                            balance = api.buy(SESSION_ID, ticker, fresh_ask, amount)
                             ticker_positions[ticker] += amount
                             log.info(
-                                "  >>> BUY %d x %s @ %.2f | Баланс: %.2f",
-                                amount, ticker, price, balance,
+                                "  >>> BUY %d x %s @ %.3f | Баланс: %.2f",
+                                amount, ticker, fresh_ask, balance,
                             )
                         except requests.HTTPError as e:
                             log.warning("  !!! %s: ошибка покупки: %s", ticker, e.response.text)
 
                     elif action == "SELL" and amount > 0:
                         try:
-                            balance = api.sell(SESSION_ID, ticker, price, amount)
+                            # Получаем свежую цену прямо перед сделкой
+                            fresh = api.get_current_price(SESSION_ID, ticker)
+                            fresh_bid = float(fresh["bid_price"])
+                            balance = api.sell(SESSION_ID, ticker, fresh_bid, amount)
                             ticker_positions[ticker] -= amount
                             log.info(
-                                "  <<< SELL %d x %s @ %.2f | Баланс: %.2f",
-                                amount, ticker, price, balance,
+                                "  <<< SELL %d x %s @ %.3f | Баланс: %.2f",
+                                amount, ticker, fresh_bid, balance,
                             )
                         except requests.HTTPError as e:
                             log.warning("  !!! %s: ошибка продажи: %s", ticker, e.response.text)
